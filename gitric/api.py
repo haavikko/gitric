@@ -21,28 +21,32 @@ def force_push():
     env.gitric_force_push = True
 
 
-def git_init(repo_path, use_sudo=False):
+def git_init(repo_path, use_sudo=False, sudo_user=None):
     """ create a git repository if necessary [remote] """
 
     # check if it is a git repository yet
-    if exists('%s/.git' % repo_path):
+    if exists('%s/.git' % repo_path, use_sudo=use_sudo):
         return
 
     puts(green('Creating new git repository ') + repo_path)
 
-    func = sudo if use_sudo else run
+    def _do(cmd):
+        if use_sudo:
+            sudo(cmd, user=sudo_user)
+        else:
+            run(cmd)
 
     # create repository folder if necessary
-    func('mkdir -p %s' % repo_path, quiet=True)
+    _do('mkdir -p %s' % repo_path, quiet=True)
 
     with cd(repo_path):
         # initialize the remote repository
-        func('git init')
+        _do('git init')
 
         # silence git complaints about pushes coming in on the current branch
         # the pushes only seed the immutable object store and do not modify the
         # working copy
-        func('git config receive.denyCurrentBranch ignore')
+        _do('git config receive.denyCurrentBranch ignore')
 
 
 def git_seed(repo_path, commit=None, ignore_untracked_files=False,

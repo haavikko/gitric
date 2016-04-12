@@ -9,6 +9,15 @@ from fabric.contrib.files import exists
 from fabric.colors import green
 
 
+def _do(use_sudo=False, sudo_user=None):
+    # helper for using either sudo or
+    def _inner(cmd, *args, **kw):
+        if use_sudo:
+            return sudo(cmd, user=sudo_user, *args, **kw)
+        else:
+            return run(cmd, *args, **kw)
+    return _inner
+
 @task
 def allow_dirty():
     """ allow pushing even when the working copy is dirty """
@@ -20,37 +29,42 @@ def force_push():
     """ allow pushing even when history will be lost """
     env.gitric_force_push = True
 
-
 def git_init(repo_path, use_sudo=False, sudo_user=None):
     """ create a git repository if necessary [remote] """
 
+    do = _do(use_sudo, sudo_user)
+
+    def _config():
+        do('git config receive.denyCurrentBranch ignore')
+
     # check if it is a git repository yet
     if exists('%s/.git' % repo_path, use_sudo=use_sudo):
+        _config()
         return
-
     puts(green('Creating new git repository ') + repo_path)
 
-    def _do(cmd):
-        if use_sudo:
-            sudo(cmd, user=sudo_user)
-        else:
-            run(cmd)
-
     # create repository folder if necessary
-    _do('mkdir -p %s' % repo_path, quiet=True)
+    do('mkdir -p %s' % repo_path, quiet=True)
 
     with cd(repo_path):
         # initialize the remote repository
-        _do('git init')
+        do('git init')
 
         # silence git complaints about pushes coming in on the current branch
         # the pushes only seed the immutable object store and do not modify the
         # working copy
-        _do('git config receive.denyCurrentBranch ignore')
+        _config()
 
+def git_current_branch_name():
+    return local('git rev-parse --abbrev-ref HEAD', capture=True)
 
-def git_seed(repo_path, commit=None, ignore_untracked_files=False,
-             use_sudo=False):
+def git_seed(repo_path,
+             commit=None,
+             remote_branch=None,
+             ignore_untracked_files=False,
+             use_sudo=False,
+             sudo_user=None,
+             remote_git_user=None):
     """ seed a git repository (and create if necessary) [remote] """
 
     # check if the local repository is dirty
@@ -62,10 +76,16 @@ def git_seed(repo_path, commit=None, ignore_untracked_files=False,
             'call.')
 
     # check if the remote repository exists and create it if necessary
-    git_init(repo_path, use_sudo=use_sudo)
+    git_init(repo_path, use_sudo=use_sudo, sudo_user=sudo_user)
 
     # use specified commit or HEAD
     commit = commit or git_head_rev()
+    if not remote_branch:
+        remote_branch = git_current_branch_name()
+        if '* {}'.format(remote_branch) not in local('git branch --contains {}'.format(commit), capture=True):
+            abort('Can not push: commit {} is not in branch {}'.format(commit, remote_branch))
+
+    remote_git_user = remote_git_user or sudo_user or env.user
 
     # push the commit to the remote repository
     #
@@ -73,12 +93,13 @@ def git_seed(repo_path, commit=None, ignore_untracked_files=False,
     # of the working directory)
 
     puts(green('Pushing commit ') + commit)
+    puts(green('Pushing to remote branch ') + remote_branch)
 
     with settings(warn_only=True):
         force = ('gitric_force_push' in env) and '-f' or ''
         push = local(
-            'git push git+ssh://%s@%s:%s%s %s:refs/heads/master %s' % (
-                env.user, env.host, env.port, repo_path, commit, force))
+            'git push git+ssh://%s@%s:%s%s %s:refs/heads/%s %s' % (
+                remote_git_user, env.host, env.port, repo_path, commit, remote_branch, force))
 
     if push.failed:
         abort(
@@ -88,8 +109,9 @@ def git_seed(repo_path, commit=None, ignore_untracked_files=False,
             'gitric.api.force_push and add it to your call.' % commit)
 
 
-def git_reset(repo_path, commit=None, use_sudo=False):
+def git_reset(repo_path, commit=None, use_sudo=False, sudo_user=None):
     """ reset the working directory to a specific commit [remote] """
+    do = _do(use_sudo, sudo_user)
 
     # use specified commit or HEAD
     commit = commit or git_head_rev()
@@ -98,8 +120,7 @@ def git_reset(repo_path, commit=None, use_sudo=False):
 
     # reset the repository and working directory
     with cd(repo_path):
-        func = sudo if use_sudo else run
-        func('git reset --hard %s' % commit)
+        do('git reset --hard %s' % commit)
 
 
 def git_head_rev():

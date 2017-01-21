@@ -55,7 +55,7 @@ def git_init(repo_path, use_sudo=False, sudo_user=None):
         # working copy
         _config()
 
-def git_current_branch_name():
+def git_current_local_branch_name():
     return local('git rev-parse --abbrev-ref HEAD', capture=True)
 
 def git_seed(repo_path,
@@ -81,7 +81,7 @@ def git_seed(repo_path,
     # use specified commit or HEAD
     commit = commit or git_head_rev()
     if not remote_branch:
-        remote_branch = git_current_branch_name()
+        remote_branch = git_current_local_branch_name()
         if '* {}'.format(remote_branch) not in local('git branch --contains {}'.format(commit), capture=True):
             abort('Can not push: commit {} is not in branch {}'.format(commit, remote_branch))
 
